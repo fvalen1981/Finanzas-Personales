@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flujo de Caja Familiar · FinanzasPY</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #f1f5f9; font-family: 'Georgia', 'Palatino Linotype', serif; }
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
+    input[type=number] { -moz-appearance: textfield; }
+    ::-webkit-scrollbar { height: 6px; width: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useMemo, useCallback, useRef, useEffect } = React;
+
+    const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
+                    "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+    const CURRENT_YEAR  = new Date().getFullYear();
+    const CURRENT_MONTH = new Date().getMonth();
+
+    const fmt = (n) => {
+      if (n===null||n===undefined||isNaN(n)) return "₲ 0";
+      const abs = Math.abs(Math.round(n));
+      return (n<0?"−":"")+"₲ "+abs.toLocaleString("es-PY");
+    };
+    const fmtShort = (n) => {
+      if (!n||isNaN(n)) return "₲ 0";
+      const s=n<0?"−":"", a=Math.abs(n);
+      if(a>=1_000_000) return s+"₲ "+(a/1_000_000).toFixed(1)+"M";
+      if(a>=1_000)     return s+"₲ "+(a/1_000).toFixed(0)+"K";
+      return s+"₲ "+Math.round(a);
+    };
+    const uid = () => "_"+Math.random().toString(36).slice(2,9);
+    const buildEmptyValues = () => Array(12).fill(0);
+
+    // ── INITIAL DATA ──────────────────────────────────────────────
+
+    const INIT_ING = [
+      { id:"ing_fij", label:"Ingresos Fijos",    type:"fixed",    color:"#0f6b3d",
+        items:[{id:"if_s1",label:"Salario Persona 1"},{id:"if_s2",label:"Salario Persona 2"},{id:"if_alq",label:"Alquiler cobrado"}] },
+      { id:"ing_var", label:"Ingresos Variables", type:"variable", color:"#1a7a4a",
+        items:[{id:"iv_fr",label:"Freelance / Extras"},{id:"iv_div",label:"Dividendos / Inversiones"},{id:"iv_ot",label:"Otros ingresos"}] },
+    ];
+
+    const INIT_EGR = [
+      { id:"hf",  rubro:"Hogar",     label:"Fijos",     type:"fixed",    color:"#1a56a0",
+        items:[{id:"hf_alq",label:"Alquiler / Cuota casa"},{id:"hf_luz",label:"Electricidad"},{id:"hf_agu",label:"Agua"},{id:"hf_gas",label:"Gas"},{id:"hf_int",label:"Internet / Cable"}] },
+      { id:"hv",  rubro:"Hogar",     label:"Variables",  type:"variable", color:"#2563a8",
+        items:[{id:"hv_sup",label:"Supermercado"},{id:"hv_lim",label:"Limpieza / Mantenimiento"},{id:"hv_dec",label:"Decoración / Muebles"}] },
+      { id:"mf",  rubro:"Mascotas",  label:"Fijos",     type:"fixed",    color:"#7c4f1e",
+        items:[{id:"mf_al",label:"Alimento"},{id:"mf_seg",label:"Seguro mascota"}] },
+      { id:"mv",  rubro:"Mascotas",  label:"Variables",  type:"variable", color:"#a0612a",
+        items:[{id:"mv_vet",label:"Veterinario"},{id:"mv_acc",label:"Accesorios / Otros"}] },
+      { id:"p1f", rubro:"Persona 1", label:"Fijos",     type:"fixed",    color:"#374151",
+        items:[{id:"p1f_gy",label:"Gimnasio / Deporte"},{id:"p1f_se",label:"Seguro médico"},{id:"p1f_tr",label:"Transporte / Nafta"}] },
+      { id:"p1v", rubro:"Persona 1", label:"Variables",  type:"variable", color:"#4b5563",
+        items:[{id:"p1v_rp",label:"Ropa / Calzado"},{id:"p1v_sa",label:"Salidas / Ocio"},{id:"p1v_fa",label:"Salud / Farmacia"}] },
+      { id:"p2f", rubro:"Persona 2", label:"Fijos",     type:"fixed",    color:"#6b21a8",
+        items:[{id:"p2f_gy",label:"Gimnasio / Deporte"},{id:"p2f_se",label:"Seguro médico"},{id:"p2f_tr",label:"Transporte / Nafta"}] },
+      { id:"p2v", rubro:"Persona 2", label:"Variables",  type:"variable", color:"#7e22ce",
+        items:[{id:"p2v_rp",label:"Ropa / Calzado"},{id:"p2v_sa",label:"Salidas / Ocio"},{id:"p2v_co",label:"Cosméticos / Cuidado"}] },
+      { id:"crf", rubro:"Créditos",  label:"Fijos",     type:"fixed",    color:"#991b1b",
+        items:[{id:"cf_pe",label:"Préstamo personal"},{id:"cf_ve",label:"Préstamo vehículo"},{id:"cf_hi",label:"Crédito hipotecario"}] },
+      { id:"trv", rubro:"Tarjetas",  label:"Variables",  type:"variable", color:"#b45309",
+        items:[{id:"tv_vi",label:"Tarjeta Visa"},{id:"tv_mc",label:"Tarjeta Mastercard"},{id:"tv_ot",label:"Otras tarjetas"}] },
+      { id:"imf", rubro:"Impuestos", label:"Fijos",     type:"fixed",    color:"#065f46",
+        items:[{id:"imf_ip",label:"IPS / Seguridad social"},{id:"imf_ir",label:"IRE / Impuesto renta"}] },
+      { id:"imv", rubro:"Impuestos", label:"Variables",  type:"variable", color:"#047857",
+        items:[{id:"imv_mu",label:"Tasa municipal / IVA"},{id:"imv_pa",label:"Impuesto patrimonial"}] },
+      { id:"edf", rubro:"Educación", label:"Fijos",     type:"fixed",    color:"#1e40af",
+        items:[{id:"ef_cu",label:"Cuota colegio / universidad"},{id:"ef_ca",label:"Cursos / Capacitación"}] },
+      { id:"edv", rubro:"Educación", label:"Variables",  type:"variable", color:"#2563eb",
+        items:[{id:"ev_li",label:"Libros / Materiales"},{id:"ev_ac",label:"Actividades extracurriculares"}] },
+    ];
+
+    const STORAGE_KEY = "finanzaspy_v1";
+
+    const buildInitialData = () => {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        try { return JSON.parse(saved); } catch(e) {}
+      }
+      const d = { _ahorro: buildEmptyValues() };
+      [...INIT_ING,...INIT_EGR].forEach(r=>r.items.forEach(it=>{d[it.id]=buildEmptyValues();}));
+      return d;
+    };
+
+    const loadRubros = (key, init) => {
+      const saved = localStorage.getItem(key);
+      if (saved) { try { return JSON.parse(saved); } catch(e) {} }
+      return init;
+    };
+
+    // ── EDITABLE LABEL ────────────────────────────────────────────
+
+    function EditableLabel({ value, onChange }) {
+      const [editing, setEditing] = useState(false);
+      const [draft, setDraft] = useState(value);
+      const ref = useRef();
+      useEffect(() => { if(editing) ref.current?.focus(); }, [editing]);
+      const commit = () => {
+        setEditing(false);
+        const t = draft.trim();
+        if(t && t!==value) onChange(t); else setDraft(value);
+      };
+      if(editing) return (
+        <input ref={ref} value={draft}
+          onChange={e=>setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e=>{if(e.key==="Enter")commit();if(e.key==="Escape"){setDraft(value);setEditing(false);}}}
+          style={{border:"none",borderBottom:"2px solid #3b82f6",background:"transparent",
+            fontSize:13,fontFamily:"inherit",outline:"none",width:"calc(100% - 20px)",
+            color:"inherit",fontWeight:"inherit"}}
+        />
+      );
+      return (
+        <span onClick={()=>{setDraft(value);setEditing(true);}}
+          title="✏ Clic para renombrar"
+          style={{cursor:"text",flex:1,display:"block",
+            borderBottom:"1px dashed #cbd5e1",paddingBottom:1}}>
+          {value}
+        </span>
+      );
+    }
+
+    // ── ADD ITEM ROW ──────────────────────────────────────────────
+
+    function AddItemRow({ color, colCount, onAdd }) {
+      const [active, setActive] = useState(false);
+      const [text, setText] = useState("");
+      const ref = useRef();
+      useEffect(()=>{if(active) ref.current?.focus();},[active]);
+      const commit = () => {
+        const t=text.trim(); if(t){onAdd(t);setText("");} setActive(false);
+      };
+      if(!active) return (
+        <tr>
+          <td colSpan={colCount+1} style={{padding:"3px 36px 6px",borderBottom:"1px solid #f1f5f9"}}>
+            <button onClick={()=>setActive(true)} style={{
+              background:"none",border:`1px dashed ${color}77`,borderRadius:6,
+              color:color,fontSize:12,fontWeight:600,cursor:"pointer",
+              padding:"3px 12px",display:"inline-flex",alignItems:"center",gap:5}}>
+              <b style={{fontSize:16}}>+</b> Agregar concepto
+            </button>
+          </td>
+        </tr>
+      );
+      return (
+        <tr style={{background:color+"0a"}}>
+          <td style={{padding:"7px 36px",borderRight:"1px solid #e2e8f0"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <input ref={ref} value={text} onChange={e=>setText(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter")commit();if(e.key==="Escape"){setText("");setActive(false);}}}
+                placeholder="Nombre del concepto..."
+                style={{flex:1,border:"none",borderBottom:`2px solid ${color}`,background:"transparent",
+                  fontSize:13,fontFamily:"inherit",outline:"none",padding:"2px 0",color:"#111"}}
+              />
+              <button onClick={commit}
+                style={{background:color,color:"#fff",border:"none",borderRadius:5,
+                  padding:"3px 10px",fontSize:12,cursor:"pointer",fontWeight:700}}>✓</button>
+              <button onClick={()=>{setText("");setActive(false);}}
+                style={{background:"#f3f4f6",border:"none",borderRadius:5,
+                  padding:"3px 8px",fontSize:12,cursor:"pointer",color:"#6b7280"}}>✕</button>
+            </div>
+          </td>
+          {Array(colCount).fill(0).map((_,i)=><td key={i} style={{background:color+"0a"}}/>)}
+        </tr>
+      );
+    }
+
+    // ── SUMMARY BAR ───────────────────────────────────────────────
+
+    function SummaryBar({ totalIng, totalEgr, sobrante, ahorro, acumulado }) {
+      const pct = totalIng>0?(ahorro/totalIng*100).toFixed(1):0;
+      const cards=[
+        {label:"Total Ingresos",   val:totalIng,  color:"#0f6b3d", bg:"#dcfce7"},
+        {label:"Total Egresos",    val:totalEgr,  color:"#991b1b", bg:"#fee2e2"},
+        {label:"Sobrante",         val:sobrante,  color:sobrante>=0?"#1a56a0":"#dc2626", bg:sobrante>=0?"#dbeafe":"#fecaca"},
+        {label:"Ahorro del mes",   val:ahorro,    color:"#7c3aed", bg:"#ede9fe", sub:`${pct}% de ingresos`},
+        {label:"Ahorro Acumulado", val:acumulado, color:"#0891b2", bg:"#e0f2fe"},
+      ];
+      return (
+        <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12,marginBottom:24}}>
+          {cards.map((c,i)=>(
+            <div key={i} style={{background:c.bg,borderRadius:10,padding:"14px 16px",borderLeft:`4px solid ${c.color}`}}>
+              <div style={{fontSize:11,color:c.color,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginBottom:4}}>{c.label}</div>
+              <div style={{fontSize:19,fontWeight:800,color:c.color,letterSpacing:"-.02em"}}>{fmtShort(c.val)}</div>
+              {c.sub&&<div style={{fontSize:11,color:c.color+"bb",marginTop:2}}>{c.sub}</div>}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ── MONTH HEADER ──────────────────────────────────────────────
+
+    function MonthHeader({ selected, onSelect }) {
+      return (
+        <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:20}}>
+          {MONTHS.map((m,i)=>(
+            <button key={i} onClick={()=>onSelect(i)} style={{
+              padding:"6px 13px",borderRadius:6,border:"none",cursor:"pointer",
+              fontSize:12,fontWeight:700,letterSpacing:".04em",
+              background:selected===i?"#0f2d5c":"#f1f5f9",
+              color:selected===i?"#fff":"#64748b",transition:"all .15s"}}>
+              {m.slice(0,3).toUpperCase()}
+            </button>
+          ))}
+          <button onClick={()=>onSelect(null)} style={{
+            padding:"6px 13px",borderRadius:6,border:"none",cursor:"pointer",
+            fontSize:12,fontWeight:700,letterSpacing:".04em",
+            background:selected===null?"#0f2d5c":"#f1f5f9",
+            color:selected===null?"#fff":"#64748b"}}>
+            ANUAL ▦
+          </button>
+        </div>
+      );
+    }
+
+    // ── TREND CHART ───────────────────────────────────────────────
+
+    function TrendChart({ ingRubros, egrRubros, data }) {
+      const maxH=100;
+      const vals=MONTHS.map((_,idx)=>{
+        const ing=ingRubros.reduce((s,r)=>s+r.items.reduce((ss,it)=>ss+(data[it.id]?.[idx]||0),0),0);
+        const egr=egrRubros.reduce((s,r)=>s+r.items.reduce((ss,it)=>ss+(data[it.id]?.[idx]||0),0),0);
+        const aho=data["_ahorro"]?.[idx]||0;
+        return {ing,egr,aho};
+      });
+      const maxVal=Math.max(...vals.flatMap(v=>[v.ing,v.egr]),1);
+      return (
+        <div style={{background:"#fff",borderRadius:12,padding:20,boxShadow:"0 1px 8px rgba(0,0,0,.06)",marginBottom:24}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#64748b",letterSpacing:".06em",marginBottom:16}}>PROYECCIÓN ANUAL</div>
+          <div style={{display:"flex",alignItems:"flex-end",gap:6,height:maxH+20}}>
+            {vals.map((v,i)=>(
+              <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                <div style={{width:"100%",display:"flex",gap:2,alignItems:"flex-end",height:maxH}}>
+                  <div style={{flex:1,background:"#0f6b3d",borderRadius:"3px 3px 0 0",opacity:.85,height:`${(v.ing/maxVal)*maxH}px`,minHeight:v.ing>0?3:0,transition:"height .4s"}}/>
+                  <div style={{flex:1,background:"#991b1b",borderRadius:"3px 3px 0 0",opacity:.8, height:`${(v.egr/maxVal)*maxH}px`,minHeight:v.egr>0?3:0,transition:"height .4s"}}/>
+                  <div style={{flex:1,background:"#7c3aed",borderRadius:"3px 3px 0 0",opacity:.8, height:`${(v.aho/maxVal)*maxH}px`,minHeight:v.aho>0?3:0,transition:"height .4s"}}/>
+                </div>
+                <span style={{fontSize:9,color:"#94a3b8",fontWeight:600}}>{MONTHS[i].slice(0,3).toUpperCase()}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:20,marginTop:12}}>
+            {[["#0f6b3d","Ingresos"],["#991b1b","Egresos"],["#7c3aed","Ahorro"]].map(([c,l])=>(
+              <span key={l} style={{fontSize:11,color:c,display:"flex",alignItems:"center",gap:5,fontWeight:600}}>
+                <span style={{width:10,height:10,background:c,borderRadius:2,display:"inline-block"}}/> {l}
+              </span>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ── FLOW TABLE ────────────────────────────────────────────────
+
+    function FlowTable({ ingRubros, egrRubros, data, setData, viewMonth, onAdd, onRemove, onRename }) {
+      const cols = viewMonth===null
+        ? MONTHS.map((m,i)=>({label:m.slice(0,3),idx:i}))
+        : [{label:MONTHS[viewMonth],idx:viewMonth}];
+      const CW = viewMonth===null ? 88 : 140;
+
+      const updateVal = useCallback((id, mi, raw) => {
+        const v = parseFloat(raw.replace(/[^0-9.-]/g,""))||0;
+        setData(p=>{
+          const arr=[...(p[id]||buildEmptyValues())];
+          arr[mi]=v;
+          return {...p,[id]:arr};
+        });
+      },[setData]);
+
+      const sumR   = (rubro,idx) => rubro.items.reduce((s,it)=>s+(data[it.id]?.[idx]||0),0);
+      const sumAll = (rubros,idx) => rubros.reduce((s,r)=>s+sumR(r,idx),0);
+      const getSob = (idx) => sumAll(ingRubros,idx)-sumAll(egrRubros,idx);
+      const getAho = (idx) => data["_ahorro"]?.[idx]||0;
+      const getLib = (idx) => getSob(idx)-getAho(idx);
+      const getAcu = (idx) => { let a=0; for(let i=0;i<=idx;i++) a+=getAho(i); return a; };
+
+      const egrGroups = useMemo(()=>{
+        const g={};
+        egrRubros.forEach(r=>{if(!g[r.rubro])g[r.rubro]=[];g[r.rubro].push(r);});
+        return g;
+      },[egrRubros]);
+
+      const labelTh={padding:"8px 14px",fontSize:11,fontWeight:700,letterSpacing:".06em",
+        textAlign:"left",color:"#94a3b8",background:"#0f172a",minWidth:250,
+        borderRight:"1px solid #334155",position:"sticky",left:0,top:0,zIndex:10};
+      const thC={padding:"8px 8px",fontSize:11,fontWeight:700,letterSpacing:".06em",
+        textAlign:"right",color:"#94a3b8",background:"#0f172a",whiteSpace:"nowrap",
+        minWidth:CW,borderRight:"1px solid #1e293b",position:"sticky",top:0,zIndex:5};
+      const sl=(bg,fg,pl,bold)=>({padding:`6px 8px 6px ${pl||14}px`,background:bg||"#fff",
+        color:fg||"#374151",fontWeight:bold?700:400,fontSize:13,
+        borderRight:"1px solid #e2e8f0",position:"sticky",left:0,zIndex:2,
+        whiteSpace:"nowrap",minWidth:250});
+      const tds=(bg,fg,bold)=>({padding:"5px 8px",textAlign:"right",fontSize:13,
+        background:bg||"#fff",borderRight:"1px solid #e2e8f0",minWidth:CW,
+        color:fg||"#111",fontWeight:bold?700:400});
+      const inp=(fg)=>({width:"100%",border:"none",background:"transparent",
+        textAlign:"right",fontSize:13,color:fg||"#111",outline:"none",
+        padding:"2px 0",fontFamily:"inherit"});
+
+      const numCells=(id,bg)=>cols.map(({idx})=>{
+        const v=data[id]?.[idx]||0;
+        return <td key={idx} style={tds(bg)}>
+          <input style={inp()} defaultValue={v>0?Math.round(v).toLocaleString("es-PY"):""}
+            placeholder="—" onBlur={e=>updateVal(id,idx,e.target.value)}/>
+        </td>;
+      });
+      const sumCells =(rubros,bg,fg,bold)=>cols.map(({idx})=><td key={idx} style={tds(bg,fg,bold)}>{fmt(sumAll(rubros,idx))}</td>);
+      const grpCells =(rubros,bg,fg)=>cols.map(({idx})=><td key={idx} style={tds(bg,fg,true)}>{fmt(rubros.reduce((s,r)=>s+sumR(r,idx),0))}</td>);
+      const subCells =(rubro,bg)=>cols.map(({idx})=><td key={idx} style={tds(bg,rubro.color,true)}>{fmt(sumR(rubro,idx))}</td>);
+      const editCells=(id,bg,fg)=>cols.map(({idx})=>{
+        const v=data[id]?.[idx]||0;
+        return <td key={idx} style={tds(bg,fg,true)}>
+          <input style={inp(fg)} defaultValue={v>0?Math.round(v).toLocaleString("es-PY"):""}
+            placeholder="—" onBlur={e=>updateVal(id,idx,e.target.value)}/>
+        </td>;
+      });
+      const calcCells=(fn,bg,fg)=>cols.map(({idx})=>{
+        const v=fn(idx);
+        return <td key={idx} style={tds(bg,v<0?"#dc2626":fg,true)}>{fmt(v)}</td>;
+      });
+
+      const ItemRow=({item,rubroId,bg})=>(
+        <tr style={{borderBottom:"1px solid #f1f5f9"}}>
+          <td style={sl(bg,"#4b5563",bg==="#fafbff"?36:28,false)}>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <EditableLabel value={item.label} onChange={lbl=>onRename(rubroId,item.id,lbl)}/>
+              <button onClick={()=>onRemove(rubroId,item.id)}
+                title="Eliminar este concepto"
+                style={{flexShrink:0,marginLeft:"auto",background:"none",border:"none",
+                  cursor:"pointer",color:"#e2e8f0",fontSize:16,lineHeight:1,padding:"0 2px"}}
+                onMouseEnter={e=>e.currentTarget.style.color="#ef4444"}
+                onMouseLeave={e=>e.currentTarget.style.color="#e2e8f0"}>×</button>
+            </div>
+          </td>
+          {numCells(item.id,bg)}
+        </tr>
+      );
+
+      return (
+        <div style={{overflowX:"auto",borderRadius:12,boxShadow:"0 2px 16px rgba(0,0,0,.08)",border:"1px solid #e2e8f0"}}>
+          <table style={{borderCollapse:"collapse",tableLayout:"fixed",width:"max-content",minWidth:"100%"}}>
+            <colgroup>
+              <col style={{width:250}}/>
+              {cols.map((_,i)=><col key={i} style={{width:CW}}/>)}
+            </colgroup>
+            <thead>
+              <tr>
+                <th style={labelTh}>CONCEPTO</th>
+                {cols.map(({label,idx})=><th key={idx} style={thC}>{label.toUpperCase()}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {/* INGRESOS */}
+              <tr style={{background:"#0f6b3d"}}>
+                <td style={{...sl("#0f6b3d","#fff",14,true),letterSpacing:".08em",fontSize:11}}>↑ INGRESOS</td>
+                {cols.map(({idx})=><td key={idx} style={{background:"#0f6b3d"}}/>)}
+              </tr>
+              {ingRubros.map(rubro=>(
+                <React.Fragment key={rubro.id}>
+                  <tr>
+                    <td style={sl(rubro.color+"22",rubro.color,14,true)}>
+                      {rubro.type==="fixed"?"▪":"◦"} {rubro.label}
+                    </td>
+                    {subCells(rubro,rubro.color+"11")}
+                  </tr>
+                  {rubro.items.map(item=><ItemRow key={item.id} item={item} rubroId={rubro.id} bg="#fff"/>)}
+                  <AddItemRow color={rubro.color} colCount={cols.length} onAdd={lbl=>onAdd(rubro.id,lbl)}/>
+                </React.Fragment>
+              ))}
+              <tr style={{background:"#dcfce7",borderTop:"2px solid #0f6b3d"}}>
+                <td style={sl("#dcfce7","#0f6b3d",14,true)}>TOTAL INGRESOS</td>
+                {sumCells(ingRubros,"#dcfce7","#0f6b3d",true)}
+              </tr>
+
+              <tr><td colSpan={cols.length+1} style={{height:8,background:"#f8fafc"}}/></tr>
+
+              {/* EGRESOS */}
+              <tr style={{background:"#7f1d1d"}}>
+                <td style={{...sl("#7f1d1d","#fff",14,true),letterSpacing:".08em",fontSize:11}}>↓ EGRESOS</td>
+                {cols.map(({idx})=><td key={idx} style={{background:"#7f1d1d"}}/>)}
+              </tr>
+              {Object.entries(egrGroups).map(([rubroName,rubros])=>{
+                const mc=rubros[0].color;
+                return (
+                  <React.Fragment key={rubroName}>
+                    <tr style={{borderTop:`2px solid ${mc}55`}}>
+                      <td style={sl(mc+"28",mc,14,true)}>◆ {rubroName.toUpperCase()}</td>
+                      {grpCells(rubros,mc+"18",mc)}
+                    </tr>
+                    {rubros.map(rubro=>(
+                      <React.Fragment key={rubro.id}>
+                        <tr>
+                          <td style={sl(rubro.color+"10",rubro.color,24,true)}>
+                            {rubro.type==="fixed"?"▪ Fijos":"◦ Variables"}
+                          </td>
+                          {subCells(rubro,rubro.color+"08")}
+                        </tr>
+                        {rubro.items.map(item=><ItemRow key={item.id} item={item} rubroId={rubro.id} bg="#fafbff"/>)}
+                        <AddItemRow color={rubro.color} colCount={cols.length} onAdd={lbl=>onAdd(rubro.id,lbl)}/>
+                      </React.Fragment>
+                    ))}
+                  </React.Fragment>
+                );
+              })}
+              <tr style={{background:"#fee2e2",borderTop:"2px solid #991b1b"}}>
+                <td style={sl("#fee2e2","#991b1b",14,true)}>TOTAL EGRESOS</td>
+                {sumCells(egrRubros,"#fee2e2","#991b1b",true)}
+              </tr>
+
+              <tr><td colSpan={cols.length+1} style={{height:8,background:"#f8fafc"}}/></tr>
+
+              {/* RESULTADOS */}
+              <tr style={{background:"#1e293b"}}>
+                <td style={{...sl("#1e293b","#e2e8f0",14,true),letterSpacing:".08em",fontSize:11}}>≡ RESULTADOS</td>
+                {cols.map(({idx})=><td key={idx} style={{background:"#1e293b"}}/>)}
+              </tr>
+              <tr style={{borderBottom:"1px solid #bfdbfe"}}>
+                <td style={sl("#dbeafe","#1a56a0",14,true)}>Sobrante (Ingresos − Egresos)</td>
+                {calcCells(getSob,"#dbeafe","#1a56a0")}
+              </tr>
+              <tr style={{borderBottom:"1px solid #ddd6fe"}}>
+                <td style={sl("#ede9fe","#7c3aed",14,true)}>Ahorro del mes ✏</td>
+                {editCells("_ahorro","#ede9fe","#7c3aed")}
+              </tr>
+              <tr style={{borderBottom:"1px solid #bbf7d0"}}>
+                <td style={sl("#f0fdf4","#15803d",14,true)}>Dinero libre (Sobrante − Ahorro)</td>
+                {calcCells(getLib,"#f0fdf4","#15803d")}
+              </tr>
+              <tr style={{borderTop:"2px solid #0891b2"}}>
+                <td style={sl("#e0f2fe","#0369a1",14,true)}>Ahorro Acumulado</td>
+                {cols.map(({idx})=><td key={idx} style={tds("#e0f2fe","#0369a1",true)}>{fmt(getAcu(idx))}</td>)}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    // ── APP ───────────────────────────────────────────────────────
+
+    function App() {
+      const [ingRubros, setIngRubros] = useState(()=>loadRubros("finanzaspy_ing", INIT_ING));
+      const [egrRubros, setEgrRubros] = useState(()=>loadRubros("finanzaspy_egr", INIT_EGR));
+      const [data,      setData]      = useState(buildInitialData);
+      const [viewMonth, setViewMonth] = useState(CURRENT_MONTH);
+      const [saved,     setSaved]     = useState(false);
+
+      // Auto-save to localStorage on every change
+      useEffect(()=>{
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        localStorage.setItem("finanzaspy_ing", JSON.stringify(ingRubros));
+        localStorage.setItem("finanzaspy_egr", JSON.stringify(egrRubros));
+      },[data, ingRubros, egrRubros]);
+
+      const mutRubros = (isIng, rubroId, fn) => {
+        const setter = isIng ? setIngRubros : setEgrRubros;
+        setter(prev => prev.map(r => r.id===rubroId ? {...r, items:fn(r.items)} : r));
+      };
+      const onAdd = useCallback((rubroId, label) => {
+        const id=uid();
+        const isIng=ingRubros.some(r=>r.id===rubroId);
+        setData(p=>({...p,[id]:buildEmptyValues()}));
+        mutRubros(isIng,rubroId,items=>[...items,{id,label}]);
+      },[ingRubros]);
+      const onRemove = useCallback((rubroId, itemId) => {
+        const isIng=ingRubros.some(r=>r.id===rubroId);
+        setData(p=>{const n={...p};delete n[itemId];return n;});
+        mutRubros(isIng,rubroId,items=>items.filter(it=>it.id!==itemId));
+      },[ingRubros]);
+      const onRename = useCallback((rubroId, itemId, label) => {
+        const isIng=ingRubros.some(r=>r.id===rubroId);
+        mutRubros(isIng,rubroId,items=>items.map(it=>it.id===itemId?{...it,label}:it));
+      },[ingRubros]);
+
+      const handleReset = () => {
+        if(!confirm("¿Borrar todos los datos y volver al estado inicial?")) return;
+        localStorage.clear();
+        window.location.reload();
+      };
+
+      const months = viewMonth===null ? MONTHS.map((_,i)=>i) : [viewMonth];
+      const sa=(rubros,idx)=>rubros.reduce((s,r)=>s+r.items.reduce((ss,it)=>ss+(data[it.id]?.[idx]||0),0),0);
+      const tI=months.reduce((s,idx)=>s+sa(ingRubros,idx),0)/months.length;
+      const tE=months.reduce((s,idx)=>s+sa(egrRubros,idx),0)/months.length;
+      const sob=tI-tE;
+      const aho=months.reduce((s,idx)=>s+(data["_ahorro"]?.[idx]||0),0)/months.length;
+      const acu=MONTHS.reduce((s,_,idx)=>s+(data["_ahorro"]?.[idx]||0),0);
+
+      return (
+        <div style={{minHeight:"100vh",background:"#f1f5f9"}}>
+          {/* HEADER */}
+          <div style={{background:"#0f172a",color:"#fff",padding:"0 28px"}}>
+            <div style={{maxWidth:1600,margin:"0 auto"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",height:60}}>
+                <div style={{display:"flex",alignItems:"center",gap:14}}>
+                  <div style={{width:38,height:38,borderRadius:8,background:"#1a56a0",
+                    display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,fontWeight:900}}>₲</div>
+                  <div>
+                    <div style={{fontSize:18,fontWeight:700,letterSpacing:"-.01em"}}>Flujo de Caja Familiar</div>
+                    <div style={{fontSize:10,color:"#64748b",letterSpacing:".1em"}}>PROYECCIÓN {CURRENT_YEAR} · GUARANÍES</div>
+                  </div>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:16}}>
+                  <span style={{fontSize:11,color:"#22c55e",fontWeight:600,letterSpacing:".04em"}}>
+                    ● Guardado automático
+                  </span>
+                  <button onClick={handleReset}
+                    style={{background:"#7f1d1d",color:"#fca5a5",border:"none",borderRadius:6,
+                      padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",letterSpacing:".04em"}}>
+                    ↺ RESET
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{maxWidth:1600,margin:"0 auto",padding:"24px 28px"}}>
+            <MonthHeader selected={viewMonth} onSelect={setViewMonth}/>
+
+            <SummaryBar
+              totalIng ={viewMonth===null?tI*12:tI}
+              totalEgr ={viewMonth===null?tE*12:tE}
+              sobrante ={viewMonth===null?sob*12:sob}
+              ahorro   ={viewMonth===null?aho*12:aho}
+              acumulado={acu}
+            />
+
+            {viewMonth===null && <TrendChart ingRubros={ingRubros} egrRubros={egrRubros} data={data}/>}
+
+            <div style={{background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:8,
+              padding:"10px 16px",marginBottom:16,fontSize:12,color:"#92400e",
+              display:"flex",gap:10,alignItems:"center"}}>
+              <span style={{fontSize:16}}>💡</span>
+              <span>
+                <b>Editar monto:</b> clic en la celda ·{" "}
+                <b>Renombrar:</b> clic sobre el nombre ·{" "}
+                <b>Agregar fila:</b> botón "+ Agregar concepto" ·{" "}
+                <b>Eliminar:</b> × al pasar el mouse ·{" "}
+                <b>Los datos se guardan automáticamente</b> en este navegador
+              </span>
+            </div>
+
+            <FlowTable
+              ingRubros={ingRubros} egrRubros={egrRubros}
+              data={data} setData={setData} viewMonth={viewMonth}
+              onAdd={onAdd} onRemove={onRemove} onRename={onRename}
+            />
+
+            <div style={{marginTop:14,fontSize:11,color:"#94a3b8",textAlign:"right"}}>
+              FinanzasPY · Flujo de Caja {CURRENT_YEAR} · Datos guardados en este navegador
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
